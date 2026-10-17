@@ -12,7 +12,13 @@ type Config = {
   attributeRules: Array<{ attribute: string; operator: 'equals' | 'in'; value?: string; values?: string[] }>;
   percentageRollout: number;
   salt: string;
+  allowEmails?: string[];
+  denyEmails?: string[];
+  allowEmailDomains?: string[];
+  denyEmailDomains?: string[];
 };
+
+const csv = (value: FormDataEntryValue | null) => String(value ?? '').split(',').map((x) => x.trim()).filter(Boolean);
 
 type Flag = {
   key: string;
@@ -49,6 +55,8 @@ function App() {
   const [createName, setCreateName] = useState('New Checkout');
   const [createDescription, setCreateDescription] = useState('');
   const [evalUser, setEvalUser] = useState('user_123');
+  const [evalEmail, setEvalEmail] = useState('');
+  const [saveError, setSaveError] = useState('');
   const [evalCountry, setEvalCountry] = useState('US');
   const [evalResult, setEvalResult] = useState<any>(null);
 
@@ -112,10 +120,14 @@ function App() {
       denylist,
       attributeRules: [{ attribute: 'country', operator: 'in', values: String(form.get('countries') ?? '').split(',').map((x) => x.trim()).filter(Boolean) }],
       percentageRollout,
-      salt: String(form.get('salt') ?? `${selectedFlag.key}-${selectedEnv}`)
+      salt: String(form.get('salt') ?? `${selectedFlag.key}-${selectedEnv}`),
+      allowEmails: csv(form.get('allowEmails')),
+      denyEmails: csv(form.get('denyEmails')),
+      allowEmailDomains: csv(form.get('allowEmailDomains')),
+      denyEmailDomains: csv(form.get('denyEmailDomains'))
     };
 
-    await fetch(`/api/admin/flags/${selectedFlag.key}/environments/${selectedEnv}`, {
+    const response = await fetch(`/api/admin/flags/${selectedFlag.key}/environments/${selectedEnv}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', 'x-role': selectedEnv === 'prod' ? 'admin' : 'developer' },
       body: JSON.stringify({
@@ -125,6 +137,16 @@ function App() {
         config
       })
     });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setSaveError(
+        Array.isArray(body.details)
+          ? body.details.map((d: { path: string; message: string }) => `${d.path}: ${d.message}`).join('; ')
+          : String(body.error ?? 'save failed')
+      );
+    } else {
+      setSaveError('');
+    }
     await refreshFlags();
     await fetchAudit(selectedFlag.key);
   };
@@ -137,7 +159,7 @@ function App() {
       body: JSON.stringify({
         flagKey: selectedFlag.key,
         environment: selectedEnv,
-        context: { userId: evalUser, attributes: { country: evalCountry } }
+        context: { userId: evalUser || undefined, email: evalEmail || undefined, attributes: { country: evalCountry } }
       })
     });
     setEvalResult(await response.json());
@@ -181,14 +203,20 @@ function App() {
               <label>Allowlist <input name="allowlist" defaultValue={selectedState.config.allowlist.join(',')} /></label>
               <label>Denylist <input name="denylist" defaultValue={selectedState.config.denylist.join(',')} /></label>
               <label>Countries (in) <input name="countries" defaultValue={(selectedState.config.attributeRules[0]?.values ?? []).join(',')} /></label>
+              <label>Allow emails <input name="allowEmails" defaultValue={(selectedState.config.allowEmails ?? []).join(',')} /></label>
+              <label>Deny emails <input name="denyEmails" defaultValue={(selectedState.config.denyEmails ?? []).join(',')} /></label>
+              <label>Allow email domains <input name="allowEmailDomains" defaultValue={(selectedState.config.allowEmailDomains ?? []).join(',')} /></label>
+              <label>Deny email domains <input name="denyEmailDomains" defaultValue={(selectedState.config.denyEmailDomains ?? []).join(',')} /></label>
               <label>Percentage <input name="percentageRollout" type="number" min={0} max={100} defaultValue={selectedState.config.percentageRollout} /></label>
               <label>Salt <input name="salt" defaultValue={selectedState.config.salt} /></label>
+              {saveError && <p role="alert">{saveError}</p>}
               <button type="submit">Save {selectedEnv}</button>
             </form>
 
             <section className="card">
               <h3>Evaluation panel</h3>
               <input value={evalUser} onChange={(e) => setEvalUser(e.target.value)} placeholder="user id" />
+              <input value={evalEmail} onChange={(e) => setEvalEmail(e.target.value)} placeholder="email (optional)" />
               <input value={evalCountry} onChange={(e) => setEvalCountry(e.target.value)} placeholder="country" />
               <button onClick={runEval}>Evaluate</button>
               {evalResult && <pre>{JSON.stringify(evalResult, null, 2)}</pre>}

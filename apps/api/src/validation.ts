@@ -17,6 +17,19 @@ const attributeRuleSchema = z
     }
   });
 
+const emailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[^\s@]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/, "must be a valid email address");
+const emailDomainSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/, "must be a valid email domain (e.g. example.com)");
+
+const overlap = (a: string[], b: string[]) => a.filter((x) => b.includes(x));
+
 export const configSchema = z
   .object({
     enabled: z.boolean(),
@@ -24,13 +37,27 @@ export const configSchema = z
     allowlist: z.array(z.string()).default([]),
     denylist: z.array(z.string()).default([]),
     attributeRules: z.array(attributeRuleSchema).default([]),
-    percentageRollout: z.number().int().min(0).max(100),
-    salt: z.string().min(1)
+    percentageRollout: z
+      .number("percentageRollout must be a number")
+      .int("percentageRollout must be an integer")
+      .min(0, "percentageRollout must be between 0 and 100")
+      .max(100, "percentageRollout must be between 0 and 100")
+      .default(100),
+    salt: z.string().min(1),
+    allowEmails: z.array(emailSchema).default([]),
+    denyEmails: z.array(emailSchema).default([]),
+    allowEmailDomains: z.array(emailDomainSchema).default([]),
+    denyEmailDomains: z.array(emailDomainSchema).default([])
   })
   .superRefine((config, ctx) => {
-    const overlap = config.allowlist.filter((u) => config.denylist.includes(u));
-    if (overlap.length) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Users cannot be in both allowlist and denylist: ${overlap.join(",")}` });
+    const pairs: Array<[string, string[], string[]]> = [
+      ["allowlist/denylist userIds", config.allowlist, config.denylist],
+      ["allowEmails/denyEmails", config.allowEmails, config.denyEmails],
+      ["allowEmailDomains/denyEmailDomains", config.allowEmailDomains, config.denyEmailDomains]
+    ];
+    for (const [label, allow, deny] of pairs) {
+      const both = overlap(allow, deny);
+      if (both.length) ctx.addIssue({ code: "custom", message: `Entries cannot be in both allow and deny (${label}): ${both.join(",")}` });
     }
   });
 
@@ -61,6 +88,8 @@ export const evaluateSchema = z.object({
   context: z
     .object({
       userId: z.string().optional(),
+      email: z.string().optional(),
+      anonymousId: z.string().optional(),
       attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))])).default({})
     })
     .default({ attributes: {} })

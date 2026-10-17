@@ -5,13 +5,39 @@ import { Repository } from "./repository.js";
 import { authHeaderSchema, createFlagSchema, evaluateSchema, updateEnvironmentSchema } from "./validation.js";
 import { Environment, environments } from "./types.js";
 import { FlagCache } from "./cache.js";
+import { ZodError } from "zod";
+import { FlagConfig } from "./types.js";
+
+export type EvaluationLogger = (entry: Record<string, unknown>) => void;
+
+const defaultEvaluationLogger: EvaluationLogger = (entry) => console.log(JSON.stringify(entry));
+
+// Legacy flags with no config for an environment are treated as enabled at 100%.
+const legacyOpenConfig = (flagKey: string, environment: Environment): FlagConfig => ({
+  enabled: true,
+  killSwitch: false,
+  allowlist: [],
+  denylist: [],
+  attributeRules: [],
+  percentageRollout: 100,
+  salt: `${flagKey}-${environment}`
+});
+
+const errorBody = (error: any) =>
+  error instanceof ZodError
+    ? {
+        error: "validation_error",
+        details: error.issues.map((i) => ({ path: i.path.join("."), message: i.message }))
+      }
+    : { error: error.message };
 
 interface AppDeps {
   repository: Repository;
   cache?: FlagCache;
+  evaluationLogger?: EvaluationLogger;
 }
 
-export function createApp({ repository, cache = new FlagCache() }: AppDeps) {
+export function createApp({ repository, cache = new FlagCache(), evaluationLogger = defaultEvaluationLogger }: AppDeps) {
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -61,7 +87,7 @@ export function createApp({ repository, cache = new FlagCache() }: AppDeps) {
       broadcast("flag_changed", { flagKey: input.key, action: "create" });
       res.status(201).json(created);
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      res.status(400).json(errorBody(error));
     }
   });
 
@@ -88,7 +114,7 @@ export function createApp({ repository, cache = new FlagCache() }: AppDeps) {
       if (String(error.message).startsWith("version_conflict")) {
         return res.status(409).json({ error: "version_conflict", currentVersion: Number(String(error.message).split(":")[1]) });
       }
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json(errorBody(error));
     }
   });
 
@@ -105,21 +131,39 @@ export function createApp({ repository, cache = new FlagCache() }: AppDeps) {
       if (!environmentState) {
         const flag = await repository.getFlag(input.flagKey);
         if (!flag) return res.status(404).json({ error: "flag_not_found" });
-        environmentState = flag.environments[input.environment];
+        environmentState = flag.environments[input.environment] ?? {
+          environment: input.environment,
+          version: 0,
+          updatedAt: flag.updatedAt,
+          updatedBy: "legacy",
+          config: legacyOpenConfig(input.flagKey, input.environment)
+        };
         cache.set(input.flagKey, input.environment, environmentState);
       }
       const result = evaluateFlag(environmentState.config, input.flagKey, input.environment, input.context as any);
+      evaluationLogger({
+        type: "flag_evaluation",
+        flagKey: input.flagKey,
+        environment: input.environment,
+        identifierType: result.identifierType,
+        identifier: result.identifier,
+        matchedRule: result.matchedRule,
+        decision: result.enabled,
+        reason: result.reason,
+        timestamp: new Date().toISOString()
+      });
       return res.json({
         flagKey: input.flagKey,
         environment: input.environment,
         enabled: result.enabled,
         reason: result.reason,
+        matchedRule: result.matchedRule,
         ruleMatches: result.ruleMatches,
         configVersion: environmentState.version,
         evaluatedAt: new Date().toISOString()
       });
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json(errorBody(error));
     }
   });
 
