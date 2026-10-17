@@ -20,6 +20,11 @@ export interface FlagConfig {
   attributeRules: AttributeRule[];
   percentageRollout: number;
   salt: string;
+  // Optional for backward compatibility with records created before targeting v1.
+  allowEmails?: string[];
+  denyEmails?: string[];
+  allowEmailDomains?: string[];
+  denyEmailDomains?: string[];
 }
 
 export interface FlagEnvironmentState {
@@ -54,5 +59,7 @@ export interface AuditRecord {
 
 export interface EvalContext {
   userId?: string;
+  email?: string;
+  anonymousId?: string;
   attributes?: Record<string, string | number | boolean | Array<string | number | boolean>>;
 }

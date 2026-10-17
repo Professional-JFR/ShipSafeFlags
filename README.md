@@ -30,15 +30,47 @@ A small but production-style feature flag control plane + evaluation API with a 
                                    +------------------+
 ```
 
-## Rule precedence (explicit)
-In `apps/api/src/evaluator.ts`:
+## Targeting + rollout controls (v1)
+
+Each environment (`dev`, `staging`, `prod`) has its own config, so environment scoping is `enabled` per environment; evaluation requests must include `environment`.
+
+### Evaluation flow and precedence
+Implemented in `apps/api/src/evaluator.ts`:
 1. `killSwitch=true` => off
-2. `enabled=false` => off
-3. denylist match => off
-4. allowlist match => on
-5. attribute rules (equals/in) must all pass
-6. deterministic percentage rollout
-7. default => on when enabled and targeting checks passed
+2. `enabled=false` for the requested environment => off
+3. **Deny rules** (hard off): `denylist` (userId), `denyEmails`, `denyEmailDomains`
+4. **Allow rules** (hard on, environment still respected): `allowlist` (userId), `allowEmails`, `allowEmailDomains`
+5. Attribute rules (equals/in) must all pass
+6. Deterministic percentage rollout (`percentageRollout`, integer 0..100)
+7. Default => on
+
+Deny always beats allow; allow beats rollout. Rollout buckets by a stable key: `userId`, else `email` (lowercased), else `anonymousId`. With no identifier the flag is off unless rollout is 100.
+
+### Example payloads
+```json
+PUT /api/admin/flags/new-checkout/environments/prod
+{
+  "actor": "alice", "reason": "gradual rollout", "expectedVersion": 1,
+  "config": {
+    "enabled": true, "killSwitch": false,
+    "allowlist": ["user_123"], "denylist": [],
+    "allowEmails": ["qa@example.com"], "denyEmails": [],
+    "allowEmailDomains": ["example.com"], "denyEmailDomains": ["spam.test"],
+    "attributeRules": [], "percentageRollout": 25, "salt": "new-checkout-prod"
+  }
+}
+
+POST /api/evaluate
+{ "flagKey": "new-checkout", "environment": "prod",
+  "context": { "userId": "user_1", "email": "a@example.com", "anonymousId": "anon-9" } }
+```
+Validation failures return `400 {"error":"validation_error","details":[{"path":"...","message":"..."}]}` (rollout outside 0..100, unknown environment, malformed email/domain, an entry in both allow and deny).
+
+### Evaluation audit logging
+Every `/api/evaluate` call emits one JSON log line: `type`, `flagKey`, `environment`, `identifierType`, `identifier`, `matchedRule` (`deny|allow|rollout|none`), `decision`, `reason`, `timestamp`. Emails are masked (`j***@example.com`).
+
+### Migration / backward compatibility
+No DB migration is needed (configs are JSONB). Existing configs without `percentageRollout` behave as 100%, without email/domain lists as empty lists; an environment with no stored config is treated as enabled at 100%. Existing endpoints are unchanged, except that 400 validation errors are now structured as above.
 
 ## Vertical slice shipped
 1. Create a flag (`POST /api/admin/flags`)
