@@ -125,7 +125,7 @@ Header-based role checks:
 - Role-gated production updates
 - SSE near-real-time refresh
 - Caching + invalidation strategy documented and implemented
-- Unit + integration tests + CI workflow
+- Unit + integration tests + CI workflow (`.github/workflows/ci.yml`: lint, test, build)
 
 ## Benchmark approach/results (initial)
 Approach:
