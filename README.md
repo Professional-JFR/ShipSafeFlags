@@ -1,5 +1,7 @@
 # ShipSafe Flags (v1 scaffold)
 
+[![CI](https://github.com/Professional-JFR/ShipSafeFlags/actions/workflows/ci.yml/badge.svg)](https://github.com/Professional-JFR/ShipSafeFlags/actions/workflows/ci.yml)
+
 A small but production-style feature flag control plane + evaluation API with a React admin UI.
 
 ## Stack
@@ -162,10 +164,14 @@ Initial local micro-benchmark (pure evaluator loop, 100k evals):
 ## Local dev
 ```bash
 npm ci
+npm run -w apps/api lint
 npm run -w apps/api test
+npm run -w apps/web lint
 npm run -w apps/web build
 docker compose up --build
 ```
+
+CI (`.github/workflows/ci.yml`) runs these same lint/test/build commands on every push to `main` and on pull requests, plus Docker image builds for the API and web apps. API tests use an in-memory repository, so no database is needed in CI.
 
 Open:
 - UI: http://localhost:5173
